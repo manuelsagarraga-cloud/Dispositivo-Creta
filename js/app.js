@@ -1,37 +1,31 @@
 import { getUsuarioActual, getSociaActual, logout } from './auth.js'
-import { getMovimientos, getResumenPeriodo, crearMovimiento, eliminarMovimiento, getProductos, periodoActual, formatPeso, formatFecha } from './db.js'
+import { getMovimientos, getResumenPeriodo, crearMovimiento, eliminarMovimiento, getProductos, getSocias, periodoActual, formatPeso, formatFecha } from './db.js'
 
 let sociaActual = null
+let todasLasSocias = []
 let productosList = []
 
-// ── Arranque ──────────────────────────────────────────────
 async function init() {
   const user = await getUsuarioActual()
-  if (!user) {
-    window.location.href = 'login.html'
-    return
-  }
+  if (!user) { window.location.href = 'login.html'; return }
 
   try {
     sociaActual = await getSociaActual(user.id)
   } catch {
-    window.location.href = 'login.html'
-    return
+    window.location.href = 'login.html'; return
   }
 
   document.getElementById('avatar-iniciales').textContent =
     sociaActual.nombre.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
   document.getElementById('topbar-nombre').textContent = sociaActual.nombre
-
   document.getElementById('btn-logout').addEventListener('click', logout)
 
-  productosList = await getProductos()
+  ;[productosList, todasLasSocias] = await Promise.all([getProductos(), getSocias()])
 
   await mostrarCaja()
   bindNav()
 }
 
-// ── Navegación ─────────────────────────────────────────────
 function bindNav() {
   document.querySelectorAll('.nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -47,6 +41,10 @@ function bindNav() {
 
 // ── VISTA: Caja ────────────────────────────────────────────
 async function mostrarCaja() {
+  const fab = document.getElementById('fab')
+  fab.style.display = 'flex'
+  fab.onclick = () => abrirModalMovimiento()
+
   const periodo = periodoActual()
   const [movimientos, resumen] = await Promise.all([
     getMovimientos({ limite: 30, periodo }),
@@ -89,8 +87,6 @@ async function mostrarCaja() {
     </div>
   `
 
-  document.getElementById('fab').onclick = () => abrirModalMovimiento()
-
   contenido.querySelectorAll('.mov-item').forEach(el => {
     el.querySelector('.btn-eliminar')?.addEventListener('click', async (e) => {
       e.stopPropagation()
@@ -111,13 +107,20 @@ function renderMovimiento(m) {
     venta: 'Venta', compra_materiales: 'Compra materiales',
     aporte_capital: 'Aporte', retiro: 'Retiro', gasto_fijo: 'Gasto fijo'
   }
+
+  const realizadoPor = m.realizado_por || m.socias?.nombre || ''
+  const badgeColor = realizadoPor === 'Creta'
+    ? 'background:#E8F4FD;color:#2980B9'
+    : 'background:var(--verde-claro);color:var(--verde)'
+
   return `
     <div class="mov-item" data-id="${m.id}">
       <div class="mov-icono ${esIngreso ? 'ingreso' : 'egreso'}">${iconos[m.tipo] || '•'}</div>
       <div class="mov-info">
         <div class="mov-desc">${m.descripcion || etiquetas[m.tipo]}</div>
         <div class="mov-meta">
-          ${formatFecha(m.fecha)} · <span class="badge-socia">${m.socias?.nombre || ''}</span>
+          ${formatFecha(m.fecha)} ·
+          <span class="badge-socia" style="${badgeColor}">${realizadoPor}</span>
           ${m.productos ? ` · ${m.productos.nombre}` : ''}
         </div>
       </div>
@@ -136,6 +139,8 @@ function abrirModalMovimiento() {
   const opcionesProducto = productosList.map(p =>
     `<option value="${p.id}">${p.nombre} — ${formatPeso(p.precio_venta)}</option>`
   ).join('')
+
+  const otrasSocias = todasLasSocias.filter(s => s.id !== sociaActual.id)
 
   cuerpo.innerHTML = `
     <div class="modal-titulo">
@@ -162,6 +167,19 @@ function abrirModalMovimiento() {
       </select>
     </div>
 
+    <div class="campo">
+      <label>¿Quién realizó este movimiento?</label>
+      <div class="chips" id="chips-responsable">
+        <button class="chip activo" data-id="${sociaActual.id}" data-nombre="${sociaActual.nombre}">
+          ${sociaActual.nombre} (yo)
+        </button>
+        ${otrasSocias.map(s => `
+          <button class="chip" data-id="${s.id}" data-nombre="${s.nombre}">${s.nombre}</button>
+        `).join('')}
+        <button class="chip" data-id="creta" data-nombre="Creta">Creta</button>
+      </div>
+    </div>
+
     <div class="campo-fila">
       <div class="campo">
         <label>Monto ($)</label>
@@ -184,21 +202,31 @@ function abrirModalMovimiento() {
     </div>
 
     <div id="error-mov" class="error-msg"></div>
-
     <button class="btn btn-primary" id="btn-guardar-mov">Guardar movimiento</button>
   `
 
   overlay.classList.add('open')
 
   let tipoSeleccionado = 'venta'
+  let responsableId = sociaActual.id
+  let responsableNombre = sociaActual.nombre
 
-  cuerpo.querySelectorAll('.chip').forEach(chip => {
+  cuerpo.querySelectorAll('#chips-tipo .chip').forEach(chip => {
     chip.addEventListener('click', () => {
-      cuerpo.querySelectorAll('.chip').forEach(c => c.classList.remove('activo'))
+      cuerpo.querySelectorAll('#chips-tipo .chip').forEach(c => c.classList.remove('activo'))
       chip.classList.add('activo')
       tipoSeleccionado = chip.dataset.tipo
       document.getElementById('campo-producto').style.display =
         tipoSeleccionado === 'venta' ? 'block' : 'none'
+    })
+  })
+
+  cuerpo.querySelectorAll('#chips-responsable .chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      cuerpo.querySelectorAll('#chips-responsable .chip').forEach(c => c.classList.remove('activo'))
+      chip.classList.add('activo')
+      responsableId = chip.dataset.id
+      responsableNombre = chip.dataset.nombre
     })
   })
 
@@ -218,16 +246,19 @@ function abrirModalMovimiento() {
     btn.textContent = 'Guardando...'
     btn.disabled = true
 
+    const sociaIdParaGuardar = responsableId === 'creta' ? sociaActual.id : responsableId
+
     try {
       await crearMovimiento({
-        socia_id: sociaActual.id,
+        socia_id: sociaIdParaGuardar,
         tipo: tipoSeleccionado,
         monto,
         medio_pago: document.getElementById('input-medio').value,
         descripcion: document.getElementById('input-desc').value.trim() || null,
         producto_id: productoId || null,
         periodo: periodoActual(),
-        fecha: new Date().toISOString()
+        fecha: new Date().toISOString(),
+        realizado_por: responsableNombre
       })
       overlay.classList.remove('open')
       mostrarCaja()
@@ -245,6 +276,9 @@ async function mostrarInventario() {
   const { crearProducto, actualizarProducto, eliminarProducto } = await import('./db.js')
   const productos = await getProductos()
   const contenido = document.getElementById('contenido')
+  document.getElementById('fab').style.display = 'flex'
+  document.getElementById('fab').onclick = () =>
+    abrirModalProducto(null, crearProducto, actualizarProducto, eliminarProducto)
 
   contenido.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
@@ -290,9 +324,6 @@ async function mostrarInventario() {
     const prod = productos.find(p => p.id === card.dataset.prodId)
     btn.onclick = () => abrirModalProducto(prod, crearProducto, actualizarProducto, eliminarProducto)
   })
-
-  document.getElementById('fab').onclick = () =>
-    abrirModalProducto(null, crearProducto, actualizarProducto, eliminarProducto)
 }
 
 function abrirModalProducto(prod, crearProducto, actualizarProducto, eliminarProducto) {
@@ -368,7 +399,7 @@ function abrirModalProducto(prod, crearProducto, actualizarProducto, eliminarPro
 
   if (esEdicion) {
     document.getElementById('btn-elim-prod').onclick = async () => {
-      if (!confirm(`¿Eliminar "${prod.nombre}"? Esta acción no se puede deshacer.`)) return
+      if (!confirm(`¿Eliminar "${prod.nombre}"?`)) return
       try {
         await eliminarProducto(prod.id)
         overlay.classList.remove('open')
@@ -382,6 +413,7 @@ function abrirModalProducto(prod, crearProducto, actualizarProducto, eliminarPro
 
 // ── VISTA: Balance ─────────────────────────────────────────
 async function mostrarBalance() {
+  document.getElementById('fab').style.display = 'none'
   const periodo = periodoActual()
   const resumen = await getResumenPeriodo(periodo)
   const contenido = document.getElementById('contenido')
@@ -418,28 +450,24 @@ async function mostrarBalance() {
     <div class="seccion-titulo">División 50/50</div>
     <div class="metricas">
       <div class="card">
-        <div class="card-title">Socia A</div>
+        <div class="card-title">Florencia</div>
         <div class="card-valor">${formatPeso(resumen.por_socia)}</div>
         <div class="card-sub">50% ganancia neta</div>
       </div>
       <div class="card">
-        <div class="card-title">Socia B</div>
+        <div class="card-title">Belén</div>
         <div class="card-valor">${formatPeso(resumen.por_socia)}</div>
         <div class="card-sub">50% ganancia neta</div>
       </div>
     </div>
 
     <div class="card" style="margin-top:12px;background:var(--verde-suave);border-color:var(--verde-claro)">
-      <div class="card-title" style="color:var(--verde)">Nota importante</div>
+      <div class="card-title" style="color:var(--verde)">Nota</div>
       <div style="font-size:13px;color:var(--verde);line-height:1.6">
-        Este balance es <strong>estimado en tiempo real</strong>. El cierre oficial del período
-        se hace el último día de cada mes. Los retiros y aportes individuales de cada socia
-        se descontarán en el cierre final.
+        Balance estimado en tiempo real. El cierre oficial se hace el último día de cada mes.
       </div>
     </div>
   `
-
-  document.getElementById('fab').style.display = 'none'
 }
 
 init()
