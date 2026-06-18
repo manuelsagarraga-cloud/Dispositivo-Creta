@@ -1,5 +1,15 @@
 import { supabase } from './supabase.js'
 
+// ── Socias ────────────────────────────────────────────────
+export async function getSocias() {
+  const { data, error } = await supabase
+    .from('socias')
+    .select('*')
+    .order('nombre')
+  if (error) throw error
+  return data
+}
+
 // ── Movimientos ────────────────────────────────────────────
 export async function getMovimientos({ limite = 50, periodo = null } = {}) {
   let query = supabase
