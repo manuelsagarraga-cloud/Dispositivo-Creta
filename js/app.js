@@ -273,12 +273,12 @@ function abrirModalMovimiento() {
 
 // ── VISTA: Inventario ──────────────────────────────────────
 async function mostrarInventario() {
-  const { crearProducto, actualizarProducto, eliminarProducto } = await import('./db.js')
+  const { crearProducto, actualizarProducto, eliminarProducto, subirFotoProducto } = await import('./db.js')
   const productos = await getProductos()
   const contenido = document.getElementById('contenido')
   document.getElementById('fab').style.display = 'flex'
   document.getElementById('fab').onclick = () =>
-    abrirModalProducto(null, crearProducto, actualizarProducto, eliminarProducto)
+    abrirModalProducto(null, crearProducto, actualizarProducto, eliminarProducto, subirFotoProducto)
 
   contenido.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
@@ -289,14 +289,22 @@ async function mostrarInventario() {
       ? `<div class="vacio"><div class="vacio-icono">📦</div>Sin productos aún.<br>Agregá tu primer artesanía.</div>`
       : productos.map(p => `
         <div class="card" style="margin-bottom:10px" data-prod-id="${p.id}">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start">
-            <div>
-              <div style="font-size:15px;font-weight:600">${p.nombre}</div>
-              <div style="font-size:12px;color:var(--texto-suave);margin-top:2px">${p.categoria || 'Sin categoría'}</div>
+          <div style="display:flex;gap:12px;align-items:flex-start">
+            <div class="prod-foto-thumb">
+              ${p.foto_url
+                ? `<img src="${p.foto_url}" alt="${p.nombre}">`
+                : `<span class="prod-foto-placeholder">📦</span>`
+              }
             </div>
-            <div style="text-align:right">
-              <div style="font-size:16px;font-weight:700;color:var(--verde)">${formatPeso(p.precio_venta)}</div>
-              <div style="font-size:12px;color:var(--texto-suave)">Costo: ${formatPeso(p.costo_materiales)}</div>
+            <div style="flex:1;display:flex;justify-content:space-between;align-items:flex-start">
+              <div>
+                <div style="font-size:15px;font-weight:600">${p.nombre}</div>
+                <div style="font-size:12px;color:var(--texto-suave);margin-top:2px">${p.categoria || 'Sin categoría'}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:16px;font-weight:700;color:var(--verde)">${formatPeso(p.precio_venta)}</div>
+                <div style="font-size:12px;color:var(--texto-suave)">Costo: ${formatPeso(p.costo_materiales)}</div>
+              </div>
             </div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--borde)">
@@ -317,25 +325,38 @@ async function mostrarInventario() {
   `
 
   document.getElementById('btn-nuevo-prod').onclick = () =>
-    abrirModalProducto(null, crearProducto, actualizarProducto, eliminarProducto)
+    abrirModalProducto(null, crearProducto, actualizarProducto, eliminarProducto, subirFotoProducto)
 
   contenido.querySelectorAll('.btn-edit-prod').forEach(btn => {
     const card = btn.closest('[data-prod-id]')
     const prod = productos.find(p => p.id === card.dataset.prodId)
-    btn.onclick = () => abrirModalProducto(prod, crearProducto, actualizarProducto, eliminarProducto)
+    btn.onclick = () => abrirModalProducto(prod, crearProducto, actualizarProducto, eliminarProducto, subirFotoProducto)
   })
 }
 
-function abrirModalProducto(prod, crearProducto, actualizarProducto, eliminarProducto) {
+function abrirModalProducto(prod, crearProducto, actualizarProducto, eliminarProducto, subirFotoProducto) {
   const overlay = document.getElementById('modal-overlay')
   const cuerpo = document.getElementById('modal-cuerpo')
   const esEdicion = !!prod
+  let fotoSeleccionada = null
 
   cuerpo.innerHTML = `
     <div class="modal-titulo">
       ${esEdicion ? 'Editar producto' : 'Nuevo producto'}
       <button class="btn-cerrar" onclick="document.getElementById('modal-overlay').classList.remove('open')">×</button>
     </div>
+
+    <div class="campo">
+      <label>Foto del producto</label>
+      <div class="foto-upload-wrap" id="foto-preview-wrap">
+        ${prod?.foto_url
+          ? `<img src="${prod.foto_url}" id="foto-preview" class="foto-preview">`
+          : `<div class="foto-placeholder" id="foto-preview-placeholder"><span>📷</span><span class="foto-placeholder-texto">Tocá para agregar foto</span></div>`
+        }
+      </div>
+      <input type="file" id="p-foto" accept="image/*" capture="environment" style="display:none">
+    </div>
+
     <div class="campo">
       <label>Nombre del producto</label>
       <input type="text" id="p-nombre" placeholder="Ej: Maceta cerámica mediana" value="${prod?.nombre || ''}">
@@ -365,6 +386,19 @@ function abrirModalProducto(prod, crearProducto, actualizarProducto, eliminarPro
 
   overlay.classList.add('open')
 
+  const inputFoto = document.getElementById('p-foto')
+  const previewWrap = document.getElementById('foto-preview-wrap')
+
+  previewWrap.addEventListener('click', () => inputFoto.click())
+
+  inputFoto.addEventListener('change', () => {
+    const file = inputFoto.files[0]
+    if (!file) return
+    fotoSeleccionada = file
+    const url = URL.createObjectURL(file)
+    previewWrap.innerHTML = `<img src="${url}" class="foto-preview">`
+  })
+
   document.getElementById('btn-guardar-prod').onclick = async () => {
     const nombre = document.getElementById('p-nombre').value.trim()
     const costo = parseFloat(document.getElementById('p-costo').value)
@@ -377,6 +411,11 @@ function abrirModalProducto(prod, crearProducto, actualizarProducto, eliminarPro
       errEl.classList.add('visible')
       return
     }
+    errEl.classList.remove('visible')
+
+    const btn = document.getElementById('btn-guardar-prod')
+    btn.textContent = 'Guardando...'
+    btn.disabled = true
 
     const datos = {
       nombre,
@@ -387,13 +426,25 @@ function abrirModalProducto(prod, crearProducto, actualizarProducto, eliminarPro
     }
 
     try {
-      if (esEdicion) await actualizarProducto(prod.id, datos)
-      else await crearProducto(datos)
+      let productoGuardado
+      if (esEdicion) {
+        productoGuardado = await actualizarProducto(prod.id, datos)
+      } else {
+        productoGuardado = await crearProducto(datos)
+      }
+
+      if (fotoSeleccionada) {
+        const fotoUrl = await subirFotoProducto(fotoSeleccionada, productoGuardado.id)
+        await actualizarProducto(productoGuardado.id, { foto_url: fotoUrl })
+      }
+
       overlay.classList.remove('open')
       mostrarInventario()
     } catch (e) {
       errEl.textContent = 'Error: ' + e.message
       errEl.classList.add('visible')
+      btn.textContent = esEdicion ? 'Guardar cambios' : 'Agregar producto'
+      btn.disabled = false
     }
   }
 

@@ -82,6 +82,24 @@ export async function eliminarProducto(id) {
   if (error) throw error
 }
 
+// ── Fotos de productos (Supabase Storage) ───────────────────
+export async function subirFotoProducto(file, productoId) {
+  const extension = file.name.split('.').pop()
+  const nombreArchivo = `${productoId}-${Date.now()}.${extension}`
+
+  const { error: errorSubida } = await supabase.storage
+    .from('productos')
+    .upload(nombreArchivo, file, { upsert: true })
+
+  if (errorSubida) throw errorSubida
+
+  const { data } = supabase.storage
+    .from('productos')
+    .getPublicUrl(nombreArchivo)
+
+  return data.publicUrl
+}
+
 // ── Resumen / métricas ────────────────────────────────────
 export async function getResumenPeriodo(periodo) {
   const { data, error } = await supabase
